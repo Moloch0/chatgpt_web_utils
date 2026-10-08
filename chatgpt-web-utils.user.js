@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.3.1
+// @version      0.3.2
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -18,7 +18,7 @@
 // @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.1";
+globalThis.OmniGPTVersion = "0.3.2";
 
 (function initClipboard(global) {
   "use strict";
@@ -646,11 +646,13 @@ globalThis.OmniGPTVersion = "0.3.1";
     return output;
   }
 
+  const REASONING_CONTENT_TYPES = new Set(["thoughts", "reasoning", "reasoning_recap", "reasoning_summary"]);
   function partText(part, state) {
     if (typeof part === "string") return part;
     if (part == null) return "";
     if (Array.isArray(part)) return part.map((item) => partText(item, state)).join("\n\n");
     if (typeof part === "object") {
+      if (REASONING_CONTENT_TYPES.has(part.content_type)) return "";
       if (typeof part.text === "string") return part.text;
       if (part.parts) return partText(part.parts, state);
       if (part.content) return partText(part.content, state);
@@ -659,36 +661,93 @@ globalThis.OmniGPTVersion = "0.3.1";
     }
     return String(part);
   }
+
+  function isReasoningStatus(text) {
+    const value = safeLine(text).trim();
+    return /^(?:思考了\s*(?:\d+(?:\.\d+)?\s*(?:s|秒)|[零〇一二两三四五六七八九十百]+\s*秒)|thought\s+for\s+\d+(?:\.\d+)?\s*(?:s|sec(?:ond)?s?)|thinking[.。…]*)$/i.test(value);
+  }
+  function cleanCitationMarkers(text) {
+    return String(text || "").replace(/\uE200(?:cite|filecite)\uE202[^\uE201]*\uE201/g, "").replace(/[ \t]+\n/g, "\n").trim();
+  }
+  function messageSources(message) {
+    const candidates = [message?.metadata?.citations, message?.metadata?.content_references,
+      message?.content?.citations, message?.content?.references].filter(Array.isArray).flat();
+    const seen = new Set();
+    const sources = [];
+    for (const item of candidates) {
+      const url = item?.url || item?.link || item?.metadata?.url || item?.attribution?.url;
+      if (typeof url !== "string" || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
+      seen.add(url);
+      sources.push({ title: safeLine(item.title || item.name || item.metadata?.title || item.attribution?.title || url), url });
+    }
+    return sources;
+  }
   function messagesFromNodes(nodes) {
     const state = { assets: false };
     const messages = [];
     for (const node of nodes) {
       const message = node.message;
       const role = message?.author?.role;
+      const contentType = message?.content?.content_type || message?.content_type || "";
       if (!["user", "assistant"].includes(role) || message?.metadata?.is_visually_hidden_from_conversation ||
-          ["analysis", "justify", "confidence"].includes(message?.channel) ||
+          ["analysis", "justify", "confidence"].includes(message?.channel) || REASONING_CONTENT_TYPES.has(contentType) ||
           (role === "assistant" && message.recipient && message.recipient !== "all")) continue;
       if (message?.metadata?.attachments?.length) state.assets = true;
       const content = message.text ?? message.content?.parts ?? message.content?.text ?? message.parts;
       const rawText = content == null && message.content?.content_type ? partText(message.content, state) : partText(content, state);
-      const text = normalizeMathDelimiters(rawText);
-      if (!text.trim()) continue;
-      messages.push({ index: messages.length + 1, id: message.id || node.id, role, text, markdown: text,
+      const text = cleanCitationMarkers(normalizeMathDelimiters(rawText));
+      if (!text || (role === "assistant" && isReasoningStatus(text))) continue;
+      messages.push({ index: messages.length + 1, id: message.id || node.id, role, channel: message.channel || "",
+        text, markdown: text, sources: messageSources(message),
         ...(message.create_time != null ? { createTime: message.create_time } : {}) });
     }
     return { messages, warnings: state.assets ? [ASSET_WARNING] : [] };
+  }
+
+  function publicMessage(message) {
+    if (!message) return null;
+    return { id: message.id || "", text: message.text || "", markdown: message.markdown ?? message.text ?? "",
+      ...(message.createTime != null ? { createTime: message.createTime } : {}) };
+  }
+  function roundsFromMessages(messages) {
+    const rounds = [];
+    let current = null;
+    for (const message of messages) {
+      if (message.role === "user") {
+        current = { index: rounds.length + 1, user: publicMessage(message), candidates: [] };
+        rounds.push(current);
+      } else if (message.role === "assistant" && current) current.candidates.push(message);
+    }
+    return rounds.map((round) => {
+      const finals = round.candidates.filter((message) => message.channel === "final");
+      const selected = finals.length ? finals : round.candidates.slice(-1);
+      const assistant = selected.length ? publicMessage({
+        id: selected.map((message) => message.id).filter(Boolean).join(","),
+        text: selected.map((message) => message.text).join("\n\n"),
+        markdown: selected.map((message) => message.markdown ?? message.text ?? "").join("\n\n"),
+        createTime: selected.at(-1)?.createTime
+      }) : null;
+      const seen = new Set();
+      const sources = selected.flatMap((message) => message.sources || []).filter((source) => {
+        if (seen.has(source.url)) return false;
+        seen.add(source.url); return true;
+      });
+      return { index: round.index, user: round.user, assistant, ...(sources.length ? { sources } : {}),
+        ...(!assistant ? { incomplete: true } : {}) };
+    });
   }
   function extractMessagesFromApiConversation(conversation) { return messagesFromNodes(activeNodes(conversation).nodes).messages; }
   function conversationFromApi(detail, summary = {}) {
     const path = activeNodes(detail);
     const result = messagesFromNodes(path.nodes);
-    if (!result.messages.length) throw errorWith("未找到可导出的用户或助手正文", "EMPTY");
+    const rounds = roundsFromMessages(result.messages);
+    if (!rounds.length) throw errorWith("未找到可导出的用户对话轮次", "EMPTY");
     const id = detail.id || detail.conversation_id || summary.id || summary.conversation_id || "";
-    return { schemaVersion: 1, id, title: detail.title || summary.title || "Untitled conversation",
+    return { schemaVersion: 2, id, title: detail.title || summary.title || "Untitled conversation",
       url: id ? `${getBaseOrigin()}/c/${encodeURIComponent(id)}` : "", exportedAt: new Date().toISOString(),
       createTime: detail.create_time ?? summary.create_time ?? null, updateTime: detail.update_time ?? summary.update_time ?? null,
       acquisition: "api", partial: false, warnings: [...path.warnings, ...result.warnings],
-      messageCount: result.messages.length, messages: result.messages };
+      messageCount: result.messages.length, roundCount: rounds.length, rounds };
   }
 
   function collectConversation(doc = global.document) {
@@ -699,6 +758,7 @@ globalThis.OmniGPTVersion = "0.3.1";
     const nodes = [...new Set(Array.from(root.querySelectorAll(TURN), canonical))];
     const selected = new Set(nodes);
     const messages = [];
+    let assets = false;
     for (const node of nodes) {
       if (node.closest(EXCLUDE)) continue;
       let nested = false;
@@ -710,12 +770,15 @@ globalThis.OmniGPTVersion = "0.3.1";
       }
       const role = node.getAttribute("data-turn") || node.getAttribute("data-message-author-role") || node.querySelector("[data-message-author-role]")?.getAttribute("data-message-author-role") || "assistant";
       if (!["user", "assistant"].includes(role)) continue;
+      if (node.querySelector("img, video, audio, [data-attachment-id], [data-testid*='attachment']")) assets = true;
       const rendered = global.OmniGPTClipboard.serializeElement(node, { mathStyle: "markdown" });
       if (!rendered?.text?.trim()) continue;
       messages.push({ index: messages.length + 1, role, text: rendered.text, markdown: rendered.text });
     }
-    return { schemaVersion: 1, title: getConversationTitle(doc), url: global.location?.href || "", exportedAt: new Date().toISOString(),
-      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ASSET_WARNING], messageCount: messages.length, messages };
+    const rounds = roundsFromMessages(messages);
+    return { schemaVersion: 2, title: getConversationTitle(doc), url: global.location?.href || "", exportedAt: new Date().toISOString(),
+      acquisition: "dom", partial: true, warnings: [DOM_WARNING, ...(assets ? [ASSET_WARNING] : [])], messageCount: messages.length,
+      roundCount: rounds.length, rounds };
   }
 
   async function collectCurrentConversation(doc = global.document, options = {}) {
@@ -742,7 +805,7 @@ globalThis.OmniGPTVersion = "0.3.1";
     progress(options, { phase: "current", source: "dom" });
     const result = collectConversation(doc);
     if (apiError) result.warnings.unshift(`完整对话读取失败：${apiError.message}；已回退为页面导出。`);
-    if (!result.messageCount) throw apiError || errorWith("页面未找到可导出的正文", "EMPTY");
+    if (!result.roundCount) throw apiError || errorWith("页面未找到可导出的对话轮次", "EMPTY");
     return result;
   }
 
@@ -803,27 +866,45 @@ globalThis.OmniGPTVersion = "0.3.1";
     }
     checkAbort(options.signal);
     if (!conversations.length) throw errorWith(`全部 ${failures.length} 条对话读取失败，未生成空归档。${failures[0]?.error || ""}`, "EMPTY");
-    return { schemaVersion: 1, exportedAt: new Date().toISOString(), source: getBaseOrigin(), scope: "accessible-history-list",
+    const archiveWarnings = ["仅涵盖当前账号历史列表返回的对话，不保证包含其他工作区、已归档或项目内未列出的对话。"];
+    if (conversations.some((conversation) => conversation.warnings?.includes(ASSET_WARNING))) archiveWarnings.push(ASSET_WARNING);
+    return { schemaVersion: 2, exportedAt: new Date().toISOString(), source: getBaseOrigin(), scope: "accessible-history-list",
       totalConversations: conversations.length, requestedConversations: summaries.length, failedConversations: failures.length,
-      partial: failures.length > 0, warnings: ["仅涵盖当前账号历史列表返回的对话，不保证包含其他工作区、已归档或项目内未列出的对话。", ASSET_WARNING],
+      partial: failures.length > 0, warnings: archiveWarnings,
       failures, conversations };
   }
 
-  function formatRoleLabel(role) { return ({ user: "User", assistant: "ChatGPT", system: "System", tool: "Tool" })[role] || String(role); }
   function warningLines(value) { return (value.warnings || []).map((warning) => `> 注意：${safeLine(warning)}`).join("\n"); }
-  function formatMarkdown(conversation, options = {}) {
-    const sections = [`# ${safeTitle(conversation.title)}`];
-    if (options.includeMetadata !== false) sections.push(`- Exported at: ${conversation.exportedAt || ""}\n- Source: ${conversation.url || ""}\n- Messages: ${conversation.messageCount}\n- Acquisition: ${conversation.acquisition || "unknown"}`);
+  function sourceLines(sources, markdown = true) {
+    return (sources || []).map((source, index) => markdown
+      ? `${index + 1}. [${safeTitle(source.title || source.url)}](${String(source.url).replace(/[()\s]/g, encodeURIComponent)})`
+      : `${index + 1}. ${safeLine(source.title || source.url)} - ${source.url}`).join("\n");
+  }
+  function formatRoundMarkdown(round, headingLevel = 2) {
+    const sections = [`${"#".repeat(headingLevel)} Round ${round.index}`,
+      `**User**\n\n${round.user?.markdown ?? round.user?.text ?? ""}`,
+      `**Assistant**\n\n${round.assistant?.markdown ?? round.assistant?.text ?? "> 回答未完成。"}`];
+    if (round.sources?.length) sections.push(`**Sources**\n\n${sourceLines(round.sources)}`);
+    return sections.join("\n\n");
+  }
+  function formatConversationMarkdown(conversation, options = {}, titleLevel = 1) {
+    const sections = [`${"#".repeat(titleLevel)} ${safeTitle(conversation.title)}`];
+    if (options.includeMetadata !== false) sections.push(`> Exported: ${conversation.exportedAt || ""}\n> Source: ${conversation.url || ""}\n> Rounds: ${conversation.roundCount || conversation.rounds?.length || 0}`);
     if (conversation.warnings?.length) sections.push(warningLines(conversation));
-    for (const message of conversation.messages) sections.push(`## ${message.index}. ${formatRoleLabel(message.role)}\n\n${message.markdown ?? message.text ?? ""}`);
+    for (const round of conversation.rounds || []) sections.push(formatRoundMarkdown(round, titleLevel + 1));
     // Do not normalize the assembled document: that would destroy code indentation and blank lines.
     return sections.join("\n\n") + "\n";
   }
+  function formatMarkdown(conversation, options = {}) { return formatConversationMarkdown(conversation, options, 1); }
   function formatText(conversation, options = {}) {
     const sections = [safeLine(conversation.title)];
-    if (options.includeMetadata !== false) sections.push(`Exported at: ${conversation.exportedAt || ""}\nSource: ${conversation.url || ""}\nMessages: ${conversation.messageCount}`);
+    if (options.includeMetadata !== false) sections.push(`Exported: ${conversation.exportedAt || ""}\nSource: ${conversation.url || ""}\nRounds: ${conversation.roundCount || conversation.rounds?.length || 0}`);
     if (conversation.warnings?.length) sections.push(conversation.warnings.join("\n"));
-    for (const message of conversation.messages) sections.push(`[${message.index}] ${formatRoleLabel(message.role)}\n${message.text ?? message.markdown ?? ""}`);
+    for (const round of conversation.rounds || []) {
+      let section = `Round ${round.index}\n\nUser\n${round.user?.text ?? round.user?.markdown ?? ""}\n\nAssistant\n${round.assistant?.text ?? round.assistant?.markdown ?? "[回答未完成]"}`;
+      if (round.sources?.length) section += `\n\nSources\n${sourceLines(round.sources, false)}`;
+      sections.push(section);
+    }
     return sections.join("\n\n") + "\n";
   }
   function formatJson(value) { return JSON.stringify(value, null, 2) + "\n"; }
@@ -832,7 +913,7 @@ globalThis.OmniGPTVersion = "0.3.1";
   }
   function formatAllMarkdown(archive, options = {}) {
     return [`# ChatGPT Archive\n\nExported: ${archive.totalConversations}; requested: ${archive.requestedConversations}; failed: ${archive.failedConversations}`,
-      warningLines(archive), ...archive.conversations.map((conversation) => formatMarkdown(conversation, options)),
+      warningLines(archive), ...archive.conversations.map((conversation) => formatConversationMarkdown(conversation, options, 2)),
       ...(archive.failures?.length ? [`## Failed Conversations\n\n${failuresText(archive)}`] : [])].join("\n\n") + "\n";
   }
   function formatAllText(archive, options = {}) {
@@ -851,14 +932,16 @@ globalThis.OmniGPTVersion = "0.3.1";
       files.push({ content: current, filename: `${baseName}-part-${String(files.length + 1).padStart(2, "0")}.md`, mimeType: "text/markdown;charset=utf-8" });
       current = intro; hasContent = false;
     };
-    for (const conversation of archive.conversations) for (const message of conversation.messages) {
-      const section = `## ${safeTitle(conversation.title)} / ${message.index}. ${formatRoleLabel(message.role)}\n\n` +
+    for (const conversation of archive.conversations) for (const round of conversation.rounds || []) {
+      const section = `## ${safeTitle(conversation.title)} / Round ${round.index}\n\n` +
         (options.includeMetadata !== false ? `Source: ${conversation.url || ""}\n\n` : "") +
         (conversation.warnings?.length ? warningLines(conversation) + "\n\n" : "") +
-        (message.markdown ?? message.text ?? "") + "\n\n";
+        `**User**\n\n${round.user?.markdown ?? round.user?.text ?? ""}\n\n` +
+        `**Assistant**\n\n${round.assistant?.markdown ?? round.assistant?.text ?? "> 回答未完成。"}\n\n` +
+        (round.sources?.length ? `**Sources**\n\n${sourceLines(round.sources)}\n\n` : "");
       if (hasContent && current.length + section.length > limit) flush();
-      // Soft target: keep an oversized single message intact rather than breaking a formula/code fence.
-      if (intro.length + section.length > limit) current += "> 单条消息超过分片目标，已完整保留。\n\n";
+      // Soft target: keep an oversized round intact rather than breaking a formula/code fence.
+      if (intro.length + section.length > limit) current += "> 单轮对话超过分片目标，已完整保留。\n\n";
       current += section; hasContent = true;
     }
     if (archive.failures?.length) {
@@ -879,10 +962,10 @@ globalThis.OmniGPTVersion = "0.3.1";
   }
   function buildExportPayload(format, value, options = {}, archive = false) {
     if (!["markdown", "json", "txt", "gptbundle"].includes(format)) throw new TypeError("Unknown export format");
-    if (!archive && !value.messageCount) throw errorWith("没有可导出的正文", "EMPTY");
+    if (!archive && !value.roundCount) throw errorWith("没有可导出的对话轮次", "EMPTY");
     const base = `${archive ? "chatgpt-archive" : slugifyTitle(value.title)}-${timestampForFile(value.exportedAt)}`;
     const info = { acquisition: archive ? "api" : value.acquisition, partial: value.partial || false,
-      warnings: value.warnings || [], messageCount: archive ? value.conversations.reduce((n, item) => n + item.messageCount, 0) : value.messageCount,
+      warnings: value.warnings || [], roundCount: archive ? value.conversations.reduce((n, item) => n + item.roundCount, 0) : value.roundCount,
       conversationCount: archive ? value.totalConversations : 1, failedConversations: value.failedConversations || 0 };
     if (format === "gptbundle") {
       const bundle = archive ? value : { ...value, conversations: [value], failures: [] };
@@ -1009,14 +1092,14 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     for (const input of panel.querySelectorAll("select, input")) input.disabled = Boolean(task);
     controls.export.disabled = Boolean(task);
     controls.hint.textContent = all ? "读取当前账号历史列表；附件仅保留引用。大量历史可在更多选项中限制数量。" :
-      ({ markdown: "适合笔记和知识库；保留公式、代码和正文。", json: "结构化正文与来源信息；不是原始账号备份。", txt: "UTF-8 文本；保留 API 正文，可能仍含 Markdown 标记。", gptbundle: "按消息分片为 Markdown；单条超长消息不强行切断。" })[controls.format.value];
+      ({ markdown: "按 Round 整理提问与最终回答；保留公式、代码和正文。", json: "以 Round 组织的结构化正文与来源信息；不是原始账号备份。", txt: "UTF-8 文本；按 Round 保留正文，可能仍含 Markdown 标记。", gptbundle: "按完整 Round 分片为 Markdown；单轮超长内容不强行切断。" })[controls.format.value];
   }
   function buildPanel() {
     panel = element("section", "omnigpt-panel"); panel.id = "omnigpt-panel";
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.1"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.2"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
@@ -1085,7 +1168,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       } else exporter.createDownload(payload.content, payload.filename, payload.mimeType);
       const info = payload.info || {};
       const message = action === "copy" ? "已复制 Markdown（纯文本）" : payload.files?.length ? `已生成 ${payload.files.length} 个分片，点击下方逐个保存；关闭面板会释放分片。` : `已请求下载：${payload.filename}`;
-      const summary = `${info.conversationCount || 1} 个对话 / ${info.messageCount || 0} 条消息${info.failedConversations ? `；失败 ${info.failedConversations} 个（见文件明细）` : ""}`;
+      const summary = `${info.conversationCount || 1} 个对话 / ${info.roundCount || 0} 轮${info.failedConversations ? `；失败 ${info.failedConversations} 个（见文件明细）` : ""}`;
       setStatus([message, summary, ...(info.warnings || [])].join("\n"), info.partial || info.failedConversations ? "warning" : "info");
     } catch (error) {
       setStatus(error.name === "AbortError" ? "已取消，未继续读取或生成文件。" : error.message || "导出失败", error.name === "AbortError" ? "info" : "error");
