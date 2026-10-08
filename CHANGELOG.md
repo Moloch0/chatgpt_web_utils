@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3 - 2026-10-08
+
+- 将 ChatGPT 引用元数据映射回正文，在原引用位置生成 `[来源标题](URL)`。
+- 同时兼容 `content_references` 的 `matched_text`/`safe_urls` 和 `citations` 的位置/元数据结构。
+- 只有无法定位到正文的真实来源才追加到 Round 的 Sources 列表。
+
 ## 0.3.2 - 2026-10-08
 
 - 将导出结构从逐消息改为逐 Round：每轮包含一个 User 提问和一个 Assistant 最终回答。

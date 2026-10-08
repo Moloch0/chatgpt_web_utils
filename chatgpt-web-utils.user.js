@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.3.2
+// @version      0.3.3
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -18,7 +18,7 @@
 // @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.2";
+globalThis.OmniGPTVersion = "0.3.3";
 
 (function initClipboard(global) {
   "use strict";
@@ -666,21 +666,69 @@ globalThis.OmniGPTVersion = "0.3.2";
     const value = safeLine(text).trim();
     return /^(?:思考了\s*(?:\d+(?:\.\d+)?\s*(?:s|秒)|[零〇一二两三四五六七八九十百]+\s*秒)|thought\s+for\s+\d+(?:\.\d+)?\s*(?:s|sec(?:ond)?s?)|thinking[.。…]*)$/i.test(value);
   }
-  function cleanCitationMarkers(text) {
-    return String(text || "").replace(/\uE200(?:cite|filecite)\uE202[^\uE201]*\uE201/g, "").replace(/[ \t]+\n/g, "\n").trim();
+  const CITATION_MARKER = /\uE200(?:cite|filecite)\uE202[^\uE201]*\uE201/g;
+  function sourceTitle(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ""); } catch (_) { return "Source"; }
   }
-  function messageSources(message) {
-    const candidates = [message?.metadata?.citations, message?.metadata?.content_references,
-      message?.content?.citations, message?.content?.references].filter(Array.isArray).flat();
-    const seen = new Set();
+  function markdownLink(source) {
+    const url = String(source.url).replace(/[()\s]/g, encodeURIComponent);
+    return `[${safeTitle(source.title || sourceTitle(source.url))}](${url})`;
+  }
+  function referenceSources(item) {
     const sources = [];
-    for (const item of candidates) {
-      const url = item?.url || item?.link || item?.metadata?.url || item?.attribution?.url;
-      if (typeof url !== "string" || !/^https?:\/\//i.test(url) || seen.has(url)) continue;
-      seen.add(url);
-      sources.push({ title: safeLine(item.title || item.name || item.metadata?.title || item.attribution?.title || url), url });
+    const seen = new Set();
+    const containers = [item, item?.metadata, item?.attribution].filter(Boolean);
+    const add = (url, title) => {
+      if (typeof url !== "string" || !/^https?:\/\//i.test(url) || seen.has(url)) return;
+      seen.add(url); sources.push({ title: safeLine(title || sourceTitle(url)), url });
+    };
+    for (const container of containers) {
+      add(container.url || container.link, container.title || container.name || item?.title || item?.name);
+      for (const value of [...(Array.isArray(container.safe_urls) ? container.safe_urls : []),
+        ...(Array.isArray(container.urls) ? container.urls : [])]) {
+        if (typeof value === "string") add(value, container.title || item?.title);
+        else add(value?.url || value?.link, value?.title || container.title || item?.title);
+      }
     }
     return sources;
+  }
+  function referenceMarker(item, text) {
+    let candidate = item?.matched_text || item?.matchedText || "";
+    const start = item?.start_ix ?? item?.start_idx;
+    const end = item?.end_ix ?? item?.end_idx;
+    if (!candidate && Number.isInteger(start) && Number.isInteger(end) && start >= 0 && end > start) candidate = text.slice(start, end);
+    return candidate.match(/\uE200(?:cite|filecite)\uE202[^\uE201]*\uE201/)?.[0] || "";
+  }
+  function renderCitationLinks(value, message) {
+    const original = String(value || "");
+    const candidates = [message?.metadata?.citations, message?.metadata?.content_references,
+      message?.content?.citations, message?.content?.references].filter(Array.isArray).flat();
+    const byMarker = new Map();
+    const allSources = [];
+    const seenAll = new Set();
+    const orphanGroups = [];
+    for (const item of candidates) {
+      const sources = referenceSources(item);
+      if (!sources.length) continue;
+      for (const source of sources) if (!seenAll.has(source.url)) { seenAll.add(source.url); allSources.push(source); }
+      const marker = referenceMarker(item, original);
+      if (!marker) { orphanGroups.push(sources); continue; }
+      const group = byMarker.get(marker) || [];
+      const seen = new Set(group.map((source) => source.url));
+      for (const source of sources) if (!seen.has(source.url)) { seen.add(source.url); group.push(source); }
+      byMarker.set(marker, group);
+    }
+    const markers = [...new Set(original.match(CITATION_MARKER) || [])];
+    const unmapped = markers.filter((marker) => !byMarker.has(marker));
+    if (unmapped.length === orphanGroups.length) unmapped.forEach((marker, index) => byMarker.set(marker, orphanGroups[index]));
+    const embedded = new Set();
+    let text = original;
+    for (const [marker, sources] of byMarker) {
+      const replacement = sources.map((source) => { embedded.add(source.url); return markdownLink(source); }).join(" ");
+      text = text.split(marker).join(replacement);
+    }
+    text = text.replace(CITATION_MARKER, "").replace(/[ \t]+\n/g, "\n").trim();
+    return { text, sources: allSources.filter((source) => !embedded.has(source.url)) };
   }
   function messagesFromNodes(nodes) {
     const state = { assets: false };
@@ -695,10 +743,11 @@ globalThis.OmniGPTVersion = "0.3.2";
       if (message?.metadata?.attachments?.length) state.assets = true;
       const content = message.text ?? message.content?.parts ?? message.content?.text ?? message.parts;
       const rawText = content == null && message.content?.content_type ? partText(message.content, state) : partText(content, state);
-      const text = cleanCitationMarkers(normalizeMathDelimiters(rawText));
+      const citationResult = renderCitationLinks(rawText, message);
+      const text = normalizeMathDelimiters(citationResult.text);
       if (!text || (role === "assistant" && isReasoningStatus(text))) continue;
       messages.push({ index: messages.length + 1, id: message.id || node.id, role, channel: message.channel || "",
-        text, markdown: text, sources: messageSources(message),
+        text, markdown: text, sources: citationResult.sources,
         ...(message.create_time != null ? { createTime: message.create_time } : {}) });
     }
     return { messages, warnings: state.assets ? [ASSET_WARNING] : [] };
@@ -877,7 +926,7 @@ globalThis.OmniGPTVersion = "0.3.2";
   function warningLines(value) { return (value.warnings || []).map((warning) => `> 注意：${safeLine(warning)}`).join("\n"); }
   function sourceLines(sources, markdown = true) {
     return (sources || []).map((source, index) => markdown
-      ? `${index + 1}. [${safeTitle(source.title || source.url)}](${String(source.url).replace(/[()\s]/g, encodeURIComponent)})`
+      ? `${index + 1}. ${markdownLink(source)}`
       : `${index + 1}. ${safeLine(source.title || source.url)} - ${source.url}`).join("\n");
   }
   function formatRoundMarkdown(round, headingLevel = 2) {
@@ -1099,7 +1148,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.2"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.3"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
