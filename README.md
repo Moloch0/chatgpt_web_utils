@@ -56,6 +56,12 @@ Markdown 导出采用以下层级：一级标题是对话标题，二级标题�
 
 仓库根目录的 `chatgpt-web-utils.user.js` 是唯一安装入口，不需要构建步骤。
 
+运行不依赖第三方包的回归测试：
+
+```powershell
+npm test
+```
+
 发布修改时：
 
 1. 更新脚本头部和 `globalThis.OmniGPTVersion` 中的版本号。
