@@ -5,10 +5,10 @@
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)。
-2. 点击 [安装 ChatGPT Web Utils](https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js)。
+2. 点击 [安装最新版 ChatGPT Web Utils](https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/refs/heads/main/chatgpt-web-utils.user.js)。该地址始终跟随 `main` 分支。
 3. 在用户脚本管理器中确认安装，然后刷新 [ChatGPT](https://chatgpt.com/)。
 
-脚本管理器会根据脚本头部的 `@version` 和 `@updateURL` 检查更新。发布新版本时必须同时递增 `@version`。
+脚本管理器会根据脚本头部的 `@version` 和 `@updateURL` 检查更新。发布新版本时必须同时递增 `@version`。检查周期由 Tampermonkey/Violentmonkey 控制，push 后不会由仓库主动触发；GitHub Raw 还可能缓存约 5 分钟。需要立即更新时，可重新点击上面的最新版安装链接，或在脚本管理器中手动检查更新。
 
 ## 功能
 

@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.4.0
+// @version      0.4.2
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -14,11 +14,11 @@
 // @run-at       document-start
 // @noframes
 // @grant        none
-// @downloadURL  https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js
-// @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js
+// @downloadURL  https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/refs/heads/main/chatgpt-web-utils.user.js
+// @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/refs/heads/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.4.0";
+globalThis.OmniGPTVersion = "0.4.2";
 
 (function initClipboard(global) {
   "use strict";
@@ -1137,7 +1137,7 @@ globalThis.OmniGPTVersion = "0.4.0";
     if (document.getElementById("omnigpt-style")) return;
     const style = element("style"); style.id = "omnigpt-style";
     style.textContent = `
-#omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-border:#d6d8dc;--og-control:#f6f7f8;color-scheme:light;position:fixed;right:18px;bottom:18px;z-index:2147483000;color:var(--og-fg);font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+#omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-border:#d6d8dc;--og-control:#f6f7f8;--og-selected-bg:#e8f0fe;--og-selected-border:#1a73e8;--og-selected-fg:#174ea6;color-scheme:light;position:fixed;right:18px;bottom:18px;z-index:2147483000;color:var(--og-fg);font:13px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 #omnigpt-root *{box-sizing:border-box}#omnigpt-root [hidden]{display:none!important}
 #omnigpt-root button,#omnigpt-root select{font:inherit;color:inherit;border:1px solid var(--og-border);background:var(--og-control);border-radius:8px}
 #omnigpt-root button{cursor:pointer;padding:8px 12px}#omnigpt-root button:disabled,#omnigpt-root select:disabled{opacity:.55;cursor:default}
@@ -1154,17 +1154,19 @@ globalThis.OmniGPTVersion = "0.4.0";
 #omnigpt-root .omnigpt-round-picker{border:1px solid var(--og-border);border-radius:8px;margin:10px 0;padding:8px}
 #omnigpt-root .omnigpt-round-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:6px}#omnigpt-root .omnigpt-round-summary{color:var(--og-muted);font-size:12px;margin-right:auto}
 #omnigpt-root .omnigpt-round-toolbar button{padding:4px 7px;font-size:12px}#omnigpt-root .omnigpt-round-list{max-height:190px;overflow:auto;display:grid;gap:2px}
-#omnigpt-root .omnigpt-round{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px;align-items:start;padding:5px 3px;border-radius:5px}#omnigpt-root .omnigpt-round:hover{background:var(--og-control)}
-#omnigpt-root .omnigpt-round input{margin-top:3px}#omnigpt-root .omnigpt-round-text{min-width:0;overflow-wrap:anywhere;line-height:1.4}
+#omnigpt-root .omnigpt-round{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:7px;align-items:start;padding:6px;border:1px solid transparent;border-radius:5px;cursor:pointer}#omnigpt-root .omnigpt-round:hover{background:var(--og-control)}
+#omnigpt-root .omnigpt-round.is-selected{border-color:var(--og-selected-border);background:var(--og-selected-bg)}#omnigpt-root .omnigpt-round.is-selected .omnigpt-round-text{font-weight:600}
+#omnigpt-root .omnigpt-round input[type=checkbox]{appearance:auto!important;-webkit-appearance:checkbox!important;display:block!important;position:static!important;width:16px!important;height:16px!important;min-width:16px;opacity:1!important;margin:1px 0 0!important;accent-color:var(--og-selected-border)}
+#omnigpt-root .omnigpt-round-text{min-width:0;overflow-wrap:anywhere;line-height:1.4}#omnigpt-root .omnigpt-round-state{color:var(--og-muted);font-size:11px;white-space:nowrap}#omnigpt-root .omnigpt-round.is-selected .omnigpt-round-state{color:var(--og-selected-fg);font-weight:700}
 #omnigpt-root details{border-top:1px solid var(--og-border);margin-top:12px;padding-top:10px}#omnigpt-root summary{cursor:pointer;color:var(--og-muted)}
 #omnigpt-root .omnigpt-actions{margin-top:14px;flex-wrap:wrap}#omnigpt-root [data-action=export]{background:var(--og-fg);color:var(--og-bg);border-color:var(--og-fg)}
 #omnigpt-root .omnigpt-status{font-size:12px;white-space:pre-line;overflow-wrap:anywhere;margin-top:10px}#omnigpt-root .omnigpt-status[data-kind=error]{color:#b3261e}#omnigpt-root .omnigpt-status[data-kind=warning]{color:#865300}
 #omnigpt-root progress{width:100%;height:6px;margin-top:14px;accent-color:var(--og-fg)}
 #omnigpt-root .omnigpt-files{max-height:180px;overflow:auto;display:grid;gap:6px;margin-top:10px}#omnigpt-root .omnigpt-files button{text-align:left;overflow-wrap:anywhere;font-size:12px}
 #omnigpt-toast{position:fixed;left:50%;bottom:10%;max-width:90vw;transform:translateX(-50%);z-index:2147483647;padding:9px 15px;border-radius:9px;background:#202124;color:#fff;font:12px/1.5 system-ui}
-@media(prefers-color-scheme:dark){#omnigpt-root{--og-bg:#1b1c1e;--og-fg:#eceef1;--og-muted:#b2b7bf;--og-border:#45484d;--og-control:#27292c;color-scheme:dark}#omnigpt-root .omnigpt-status[data-kind=error]{color:#ffb4ab}#omnigpt-root .omnigpt-status[data-kind=warning]{color:#e9c46a}}
-html.dark #omnigpt-root{--og-bg:#1b1c1e;--og-fg:#eceef1;--og-muted:#b2b7bf;--og-border:#45484d;--og-control:#27292c;color-scheme:dark}
-html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-border:#d6d8dc;--og-control:#f6f7f8;color-scheme:light}
+@media(prefers-color-scheme:dark){#omnigpt-root{--og-bg:#1b1c1e;--og-fg:#eceef1;--og-muted:#b2b7bf;--og-border:#45484d;--og-control:#27292c;--og-selected-bg:#26364f;--og-selected-border:#8ab4f8;--og-selected-fg:#aecbfa;color-scheme:dark}#omnigpt-root .omnigpt-status[data-kind=error]{color:#ffb4ab}#omnigpt-root .omnigpt-status[data-kind=warning]{color:#e9c46a}}
+html.dark #omnigpt-root{--og-bg:#1b1c1e;--og-fg:#eceef1;--og-muted:#b2b7bf;--og-border:#45484d;--og-control:#27292c;--og-selected-bg:#26364f;--og-selected-border:#8ab4f8;--og-selected-fg:#aecbfa;color-scheme:dark}
+html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-border:#d6d8dc;--og-control:#f6f7f8;--og-selected-bg:#e8f0fe;--og-selected-border:#1a73e8;--og-selected-fg:#174ea6;color-scheme:light}
 @media (max-width:1100px){#omnigpt-root{right:10px;top:50%;bottom:auto;transform:translateY(-50%)}#omnigpt-root .omnigpt-launcher{width:36px;height:36px;padding:0}#omnigpt-root .omnigpt-mark{display:block}#omnigpt-root .omnigpt-label{display:none}#omnigpt-root .omnigpt-panel{right:46px;top:50%;bottom:auto;transform:translateY(-50%);width:min(340px,calc(100vw - 70px));max-height:calc(100dvh - 24px)}}
 `;
     document.head.append(style);
@@ -1191,7 +1193,14 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     return Array.from(controls.roundList.querySelectorAll('input[data-round-index]:checked'), (input) => Number(input.dataset.roundIndex));
   }
   function updateRoundSummary() {
-    const total = controls.roundList.querySelectorAll('input[data-round-index]').length;
+    const inputs = controls.roundList.querySelectorAll('input[data-round-index]');
+    for (const input of inputs) {
+      const label = input.closest(".omnigpt-round");
+      label?.classList.toggle("is-selected", input.checked);
+      const state = label?.querySelector(".omnigpt-round-state");
+      if (state) state.textContent = input.checked ? "已选" : "未选";
+    }
+    const total = inputs.length;
     const selected = selectedRoundIndices().length;
     controls.roundSummary.textContent = total ? `已选 ${selected}/${total} 轮` : "尚未加载轮次";
   }
@@ -1202,7 +1211,8 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       const input = element("input"); input.type = "checkbox"; input.checked = true; input.dataset.roundIndex = String(round.index);
       const question = String(round.user?.text || round.user?.markdown || "（无提问文本）").replace(/\s+/g, " ").trim();
       const preview = question.length > 82 ? `${question.slice(0, 82)}…` : question;
-      label.append(input, element("span", "omnigpt-round-text", `Round ${round.index} · ${preview}`));
+      label.append(input, element("span", "omnigpt-round-text", `Round ${round.index} · ${preview}`),
+        element("span", "omnigpt-round-state", "已选"));
       fragment.append(label);
     }
     controls.roundList.replaceChildren(fragment);
@@ -1258,7 +1268,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.4.0"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.4.2"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
