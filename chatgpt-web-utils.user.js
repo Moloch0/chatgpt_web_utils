@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.3.5
+// @version      0.4.0
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -18,7 +18,7 @@
 // @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.3.5";
+globalThis.OmniGPTVersion = "0.4.0";
 
 (function initClipboard(global) {
   "use strict";
@@ -33,7 +33,9 @@ globalThis.OmniGPTVersion = "0.3.5";
   const BLOCK = new Set(["P", "DIV", "SECTION", "ARTICLE", "MAIN", "FIGURE", "FIGCAPTION", "DL", "DT", "DD"]);
   const QUOTE_KEY = "omnigpt.quote-compat";
   const STYLE_KEY = "omnigpt.math-style";
+  const SELECTION_COPY_KEY = "omnigpt.selection-copy-mode";
   let mathStyle = "markdown";
+  let selectionCopyMode = "native";
   let quoteEnabled = false;
   let quotePatches = [];
   let installed = false;
@@ -139,7 +141,8 @@ globalThis.OmniGPTVersion = "0.3.5";
     const tokens = [];
     const prefix = `\uE000omnigpt-${Math.random().toString(36).slice(2)}-`;
     const protect = (value) => { tokens.push(value); return `${prefix}${tokens.length - 1}\uE001`; };
-    const style = options.mathStyle || mathStyle;
+    const outputFormat = options.format === "plain" ? "plain" : "markdown";
+    const style = outputFormat === "plain" ? "raw" : options.mathStyle || mathStyle;
     let mathCount = 0;
     let visitedNodes = 0;
     let codeDepth = 0;
@@ -174,7 +177,7 @@ globalThis.OmniGPTVersion = "0.3.5";
     const render = (node) => {
       if (!intersects(node)) return "";
       visitedNodes += 1;
-      if (node.nodeType === 3) return codeDepth ? rawText(node) : escapeProse(rawText(node));
+      if (node.nodeType === 3) return codeDepth || outputFormat === "plain" ? rawText(node) : escapeProse(rawText(node));
       if (node.nodeType !== 1) return "";
       const tag = node.tagName.toUpperCase();
       if (!codeDepth && node.matches(MATH) && !node.matches(MESSAGE)) {
@@ -187,10 +190,11 @@ globalThis.OmniGPTVersion = "0.3.5";
       }
       if (node.matches(SKIP + ", " + EDITABLE) || tag === "SCRIPT") return "";
       if (tag === "BR") return "\n";
-      if (tag === "HR") return "\n\n---\n\n";
+      if (tag === "HR") return outputFormat === "plain" ? "\n\n" : "\n\n---\n\n";
       if (tag === "IMG") {
         const alt = (node.getAttribute("alt") || "image").replace(/[\[\]\n]/g, " ");
         const src = node.getAttribute("src") || "";
+        if (outputFormat === "plain") return `[image: ${alt}]`;
         return /^(?:https?:\/\/|\/)/i.test(src) ? `![${alt}](${src.replace(/[()\s]/g, encodeURIComponent)})` : `[image: ${alt}]`;
       }
       if (tag === "PRE" || tag === "CODE") {
@@ -201,20 +205,22 @@ globalThis.OmniGPTVersion = "0.3.5";
         const longest = Math.max(0, ...(content.match(/`+/g) || []).map((run) => run.length));
         const fence = "`".repeat(Math.max(tag === "PRE" ? 3 : 1, longest + 1));
         const language = `${node.className || ""} ${node.querySelector("code")?.className || ""}`.match(/\blanguage-([\w#+-]+)/)?.[1] || "";
+        if (outputFormat === "plain") return tag === "PRE" ? `\n\n${protect(content.replace(/\n$/, ""))}\n\n` : protect(content);
         return tag === "PRE" ? `\n\n${protect(`${fence}${language}\n${content.replace(/\n$/, "")}\n${fence}`)}\n\n` : protect(`${fence}${/^`|`$|^ | $/.test(content) ? " " : ""}${content}${/^`|`$|^ | $/.test(content) ? " " : ""}${fence}`);
       }
       let value = children(node);
       if (codeDepth) return value;
       if (!value) return "";
-      if (/^H[1-6]$/.test(tag)) return `\n\n${"#".repeat(Number(tag[1]))} ${value.trim()}\n\n`;
-      if (tag === "STRONG" || tag === "B") return `**${value}**`;
-      if (tag === "EM" || tag === "I") return `*${value}*`;
-      if (tag === "DEL" || tag === "S") return `~~${value}~~`;
+      if (/^H[1-6]$/.test(tag)) return `\n\n${outputFormat === "plain" ? "" : `${"#".repeat(Number(tag[1]))} `}${value.trim()}\n\n`;
+      if (tag === "STRONG" || tag === "B") return outputFormat === "plain" ? value : `**${value}**`;
+      if (tag === "EM" || tag === "I") return outputFormat === "plain" ? value : `*${value}*`;
+      if (tag === "DEL" || tag === "S") return outputFormat === "plain" ? value : `~~${value}~~`;
       if (tag === "A") {
         const href = node.getAttribute("href") || "";
+        if (outputFormat === "plain") return value;
         return /^(?:https?:\/\/|\/|#|mailto:)/i.test(href) ? `[${value}](${href.replace(/[()\s]/g, encodeURIComponent)})` : value;
       }
-      if (tag === "BLOCKQUOTE") return `\n\n${clean(value).split("\n").map((line) => `> ${line}`).join("\n")}\n\n`;
+      if (tag === "BLOCKQUOTE") return `\n\n${outputFormat === "plain" ? clean(value) : clean(value).split("\n").map((line) => `> ${line}`).join("\n")}\n\n`;
       if (tag === "LI") {
         const parent = node.parentElement;
         let marker = "- ";
@@ -234,11 +240,11 @@ globalThis.OmniGPTVersion = "0.3.5";
         return `\n${marker}${value.trim().replace(/\n/g, "\n" + " ".repeat(marker.length))}\n`;
       }
       if (tag === "UL" || tag === "OL") return `\n\n${value.trim()}\n\n`;
-      if (tag === "TD" || tag === "TH") return ` ${value.trim().replace(/\|/g, "\\|")} |`;
-      if (tag === "TR") return `\n|${value}\n`;
+      if (tag === "TD" || tag === "TH") return outputFormat === "plain" ? `${value.trim()}\t` : ` ${value.trim().replace(/\|/g, "\\|")} |`;
+      if (tag === "TR") return outputFormat === "plain" ? `\n${value.trimEnd()}\n` : `\n|${value}\n`;
       if (tag === "TABLE") {
         const lines = value.trim().split(/\n+/);
-        if (lines.length) lines.splice(1, 0, `|${" --- |".repeat(node.querySelector("tr")?.children.length || 1)}`);
+        if (outputFormat !== "plain" && lines.length) lines.splice(1, 0, `|${" --- |".repeat(node.querySelector("tr")?.children.length || 1)}`);
         return `\n\n${lines.join("\n")}\n\n`;
       }
       return BLOCK.has(tag) ? `\n\n${value.trim()}\n\n` : value;
@@ -262,13 +268,13 @@ globalThis.OmniGPTVersion = "0.3.5";
     return serializeRange(range, { mathStyle: "markdown", ...options });
   }
 
-  function selectionPayload(selection) {
+  function selectionPayload(selection, options = {}) {
     if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
     const parts = [];
     let mathCount = 0;
     let visitedNodes = 0;
     for (let i = 0; i < selection.rangeCount; i += 1) {
-      const part = serializeRange(selection.getRangeAt(i));
+      const part = serializeRange(selection.getRangeAt(i), options);
       if (!part) return null;
       parts.push(part.text);
       mathCount += part.mathCount;
@@ -280,13 +286,19 @@ globalThis.OmniGPTVersion = "0.3.5";
   function handleCopy(event) {
     if (copyFallbackActive || !event.clipboardData || elementOf(event.target)?.closest(EDITABLE)) return;
     try {
-      const payload = selectionPayload(global.getSelection());
-      if (!payload?.mathCount || !payload.text) return;
+      const payload = selectionPayload(global.getSelection(), { format: selectionCopyMode === "plain" ? "plain" : "markdown" });
+      if (!payload?.text || (selectionCopyMode === "native" && !payload.mathCount)) return;
       event.clipboardData.clearData();
       event.clipboardData.setData("text/plain", payload.text);
       event.preventDefault();
       event.stopImmediatePropagation();
     } catch (_) { /* Leave native copy available on unexpected DOM changes. */ }
+  }
+
+  function setSelectionCopyMode(mode, persist = true) {
+    if (!["native", "markdown", "plain"].includes(mode)) throw new TypeError("Unknown selection copy mode");
+    selectionCopyMode = mode;
+    if (persist) try { global.localStorage.setItem(SELECTION_COPY_KEY, mode); } catch (_) { /* Storage is optional. */ }
   }
 
   async function writeText(text) {
@@ -373,12 +385,15 @@ globalThis.OmniGPTVersion = "0.3.5";
     });
     try {
       if (global.localStorage.getItem(STYLE_KEY) === "latex") setMathStyle("latex", false);
+      const copyMode = global.localStorage.getItem(SELECTION_COPY_KEY);
+      if (["markdown", "plain"].includes(copyMode)) setSelectionCopyMode(copyMode, false);
       if (global.localStorage.getItem(QUOTE_KEY) === "true") setQuoteCompatibility(true, false);
     } catch (_) { /* Storage optional. */ }
   }
 
   global.OmniGPTClipboard = Object.freeze({ install, handleCopy, selectionPayload, serializeRange, serializeElement,
     readFormula, unwrapTex, formatFormula, writeText, setMathStyle, get mathStyle() { return mathStyle; },
+    setSelectionCopyMode, get selectionCopyMode() { return selectionCopyMode; },
     setQuoteCompatibility, get quoteCompatibility() { return quoteEnabled; } });
 })(globalThis);
 
@@ -991,6 +1006,14 @@ globalThis.OmniGPTVersion = "0.3.5";
       ...(archive.warnings || []), ...archive.conversations.map((conversation) => formatText(conversation, options)),
       ...(archive.failures?.length ? [`Failed Conversations\n${failuresText(archive)}`] : [])].join("\n\n") + "\n";
   }
+  function selectConversationRounds(conversation, roundIndices) {
+    if (!Array.isArray(roundIndices)) return conversation;
+    const selected = new Set(roundIndices.map(Number).filter(Number.isInteger));
+    const rounds = (conversation.rounds || []).filter((round) => selected.has(round.index));
+    if (!rounds.length) throw errorWith("请至少选择一个对话轮次", "EMPTY");
+    return { ...conversation, rounds, roundCount: rounds.length,
+      messageCount: rounds.reduce((count, round) => count + (round.user ? 1 : 0) + (round.assistant ? 1 : 0), 0) };
+  }
   function buildArchiveGptImportFiles(archive, baseName, options = {}) {
     const limit = options.bundleTargetChars || GPT_UPLOAD_TARGET_CHARS;
     const intro = "# Conversation reference bundle\n\n参考材料，不是原生聊天恢复文件。\n\n" + warningLines(archive) + "\n\n";
@@ -1052,7 +1075,7 @@ globalThis.OmniGPTVersion = "0.3.5";
     extractMessagesFromApiConversation, fetchConversationDetail, fetchAllConversationSummaries, fetchJson,
     formatAllMarkdown, formatAllText, formatJson, formatMarkdown, formatText, buildArchiveGptImportFiles, buildExportPayload,
     getArchiveExportPayload, getConversationIdFromLocation, getConversationTitle, getCurrentExportPayload, getExportPayload,
-    isReasoningStatus, renderCitationLinks, roundsFromMessages, slugifyTitle };
+    isReasoningStatus, renderCitationLinks, roundsFromMessages, selectConversationRounds, slugifyTitle };
 })(globalThis);
 
 (function initOmniGPT(global) {
@@ -1064,6 +1087,8 @@ globalThis.OmniGPTVersion = "0.3.5";
   const exporter = global.ChatGPTExporter;
   const SETTINGS_KEY = "omnigpt.export-options";
   let root, launcher, panel, controls, task;
+  let currentConversationCache = null;
+  let currentConversationCacheKey = "";
   let lastProgressAt = 0;
   let preferences = { format: "markdown", includeMetadata: true };
   try {
@@ -1126,6 +1151,11 @@ globalThis.OmniGPTVersion = "0.3.5";
 #omnigpt-root .omnigpt-field{display:grid;grid-template-columns:74px minmax(0,1fr);align-items:center;gap:8px;margin:10px 0}
 #omnigpt-root select{width:100%;min-width:0;padding:7px 6px}#omnigpt-root .omnigpt-check{display:flex;gap:8px;align-items:flex-start;margin:12px 0}#omnigpt-root input{accent-color:var(--og-fg);margin-top:4px}
 #omnigpt-root .omnigpt-hint{color:var(--og-muted);font-size:12px;margin:8px 0;line-height:1.6}
+#omnigpt-root .omnigpt-round-picker{border:1px solid var(--og-border);border-radius:8px;margin:10px 0;padding:8px}
+#omnigpt-root .omnigpt-round-toolbar{display:flex;align-items:center;gap:6px;margin-bottom:6px}#omnigpt-root .omnigpt-round-summary{color:var(--og-muted);font-size:12px;margin-right:auto}
+#omnigpt-root .omnigpt-round-toolbar button{padding:4px 7px;font-size:12px}#omnigpt-root .omnigpt-round-list{max-height:190px;overflow:auto;display:grid;gap:2px}
+#omnigpt-root .omnigpt-round{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px;align-items:start;padding:5px 3px;border-radius:5px}#omnigpt-root .omnigpt-round:hover{background:var(--og-control)}
+#omnigpt-root .omnigpt-round input{margin-top:3px}#omnigpt-root .omnigpt-round-text{min-width:0;overflow-wrap:anywhere;line-height:1.4}
 #omnigpt-root details{border-top:1px solid var(--og-border);margin-top:12px;padding-top:10px}#omnigpt-root summary{cursor:pointer;color:var(--og-muted)}
 #omnigpt-root .omnigpt-actions{margin-top:14px;flex-wrap:wrap}#omnigpt-root [data-action=export]{background:var(--og-fg);color:var(--og-bg);border-color:var(--og-fg)}
 #omnigpt-root .omnigpt-status{font-size:12px;white-space:pre-line;overflow-wrap:anywhere;margin-top:10px}#omnigpt-root .omnigpt-status[data-kind=error]{color:#b3261e}#omnigpt-root .omnigpt-status[data-kind=warning]{color:#865300}
@@ -1154,38 +1184,106 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     if (value.phase === "current") setStatus(value.source === "api" ? "读取完整对话…" : "读取已加载页面…");
     if (value.phase === "retry") setStatus(`HTTP ${value.status}，有限重试 ${value.attempt}/2…`);
   }
+  function roundCacheKey() {
+    return `${global.location.origin}${global.location.pathname}|${controls?.source?.value || "auto"}`;
+  }
+  function selectedRoundIndices() {
+    return Array.from(controls.roundList.querySelectorAll('input[data-round-index]:checked'), (input) => Number(input.dataset.roundIndex));
+  }
+  function updateRoundSummary() {
+    const total = controls.roundList.querySelectorAll('input[data-round-index]').length;
+    const selected = selectedRoundIndices().length;
+    controls.roundSummary.textContent = total ? `已选 ${selected}/${total} 轮` : "尚未加载轮次";
+  }
+  function renderRoundChoices(conversation) {
+    const fragment = document.createDocumentFragment();
+    for (const round of conversation.rounds || []) {
+      const label = element("label", "omnigpt-round");
+      const input = element("input"); input.type = "checkbox"; input.checked = true; input.dataset.roundIndex = String(round.index);
+      const question = String(round.user?.text || round.user?.markdown || "（无提问文本）").replace(/\s+/g, " ").trim();
+      const preview = question.length > 82 ? `${question.slice(0, 82)}…` : question;
+      label.append(input, element("span", "omnigpt-round-text", `Round ${round.index} · ${preview}`));
+      fragment.append(label);
+    }
+    controls.roundList.replaceChildren(fragment);
+    updateRoundSummary();
+  }
+  async function loadRoundChoices(force = false) {
+    if (task || controls.scope.value === "all" || controls.roundMode.value !== "custom") return;
+    const key = roundCacheKey();
+    if (!force && currentConversationCache && currentConversationCacheKey === key) {
+      if (!controls.roundList.querySelector('input[data-round-index]')) renderRoundChoices(currentConversationCache);
+      syncControls(); return;
+    }
+    const controller = new AbortController();
+    const options = { signal: controller.signal, source: controls.source.value, onProgress: renderProgress };
+    task = controller; lastProgressAt = 0;
+    controls.roundList.replaceChildren(); updateRoundSummary();
+    controls.progress.hidden = false; controls.progress.removeAttribute("value");
+    panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("正在读取对话轮次…");
+    try {
+      const conversation = await exporter.collectCurrentConversation(document, options);
+      if (controller.signal.aborted) return;
+      currentConversationCache = conversation; currentConversationCacheKey = key;
+      renderRoundChoices(conversation);
+      setStatus(`已加载 ${conversation.roundCount} 轮，请勾选需要导出或复制的轮次。`, conversation.partial ? "warning" : "info");
+    } catch (error) {
+      setStatus(error.name === "AbortError" ? "已取消轮次读取。" : error.message || "轮次读取失败", error.name === "AbortError" ? "info" : "error");
+    } finally {
+      if (task === controller) task = null;
+      controls.progress.hidden = true; panel.removeAttribute("aria-busy"); syncControls();
+    }
+  }
   function syncControls() {
     const all = controls.scope.value === "all";
+    const customRounds = !all && controls.roundMode.value === "custom";
+    const roundChoiceCount = controls.roundList.querySelectorAll('input[data-round-index]').length;
+    const noRoundSelection = customRounds && !selectedRoundIndices().length;
     controls.limitLabel.hidden = !all;
     controls.sourceLabel.hidden = all;
-    controls.copy.disabled = Boolean(task) || all;
+    controls.roundModeLabel.hidden = all;
+    controls.roundPicker.hidden = !customRounds;
+    controls.copy.disabled = Boolean(task) || all || noRoundSelection;
     controls.cancel.hidden = !task;
     for (const input of panel.querySelectorAll("select, input")) input.disabled = Boolean(task);
-    controls.export.disabled = Boolean(task);
+    controls.roundAll.disabled = Boolean(task) || !roundChoiceCount;
+    controls.roundNone.disabled = Boolean(task) || !roundChoiceCount;
+    controls.roundRefresh.disabled = Boolean(task);
+    controls.export.disabled = Boolean(task) || noRoundSelection;
     controls.hint.textContent = all ? "读取当前账号历史列表；附件仅保留引用。大量历史可在更多选项中限制数量。" :
-      ({ markdown: "按 Round 整理提问与最终回答；保留公式、代码和正文。", json: "以 Round 组织的结构化正文与来源信息；不是原始账号备份。", txt: "UTF-8 文本；按 Round 保留正文，可能仍含 Markdown 标记。", gptbundle: "按完整 Round 分片为 Markdown；单轮超长内容不强行切断。" })[controls.format.value];
+      ({ markdown: "按 Round 整理提问与最终回答；可选择全部或部分轮次。", json: "以 Round 组织的结构化正文与来源信息；可选择全部或部分轮次。", txt: "UTF-8 文本；按 Round 保留正文；可选择全部或部分轮次。", gptbundle: "按完整 Round 分片为 Markdown；单轮超长内容不强行切断。" })[controls.format.value];
   }
   function buildPanel() {
     panel = element("section", "omnigpt-panel"); panel.id = "omnigpt-panel";
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.3.5"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.4.0"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
     const format = selectField("文件格式", "format", [["markdown", "Markdown (.md)"], ["json", "JSON (.json)"], ["txt", "文本 (.txt)"], ["gptbundle", "参考材料分片 (.md)"]]);
     format.select.value = preferences.format;
+    const roundMode = selectField("对话轮次", "roundMode", [["all", "全部轮次"], ["custom", "选择轮次"]]);
+    const roundPicker = element("div", "omnigpt-round-picker"); roundPicker.hidden = true;
+    const roundToolbar = element("div", "omnigpt-round-toolbar");
+    const roundSummary = element("span", "omnigpt-round-summary", "尚未加载轮次");
+    const roundAll = button("全选", "round-all"); const roundNone = button("清空", "round-none"); const roundRefresh = button("刷新", "round-refresh");
+    roundToolbar.append(roundSummary, roundAll, roundNone, roundRefresh);
+    const roundList = element("div", "omnigpt-round-list"); roundList.setAttribute("role", "group"); roundList.setAttribute("aria-label", "选择对话轮次");
+    roundPicker.append(roundToolbar, roundList);
     const hint = element("p", "omnigpt-hint");
     const details = element("details"); details.append(element("summary", "", "更多选项"));
     const source = selectField("读取方式", "source", [["auto", "完整对话优先"], ["dom", "仅已加载页面（离线）"]]);
     const limit = selectField("历史数量", "limit", [["0", "列表返回的全部"], ["50", "最近 50 条"], ["200", "最近 200 条"]]);
     const metadata = checkbox("包含来源和导出时间", "metadata", preferences.includeMetadata);
+    const selectionCopy = selectField("选区复制", "selectionCopy", [["native", "原生（仅增强公式）"], ["markdown", "转换为 Markdown"], ["plain", "转换为纯文本"]]);
+    selectionCopy.select.value = clipboard.selectionCopyMode;
     const style = selectField("公式复制", "mathStyle", [["markdown", "Markdown：$ / $$"], ["latex", "LaTeX：\\( \\) / \\[ \\]"]]);
     style.select.value = clipboard.mathStyle;
     const quote = checkbox("引用兼容（默认关闭）", "quote", clipboard.quoteCompatibility);
-    details.append(source.label, limit.label, metadata.label, style.label,
-      element("p", "omnigpt-hint", "自动保留行内/独立公式。Alt＋双击只复制 TeX。API 导出统一使用 Markdown 公式定界符。"),
+    details.append(source.label, limit.label, metadata.label, selectionCopy.label, style.label,
+      element("p", "omnigpt-hint", "选区复制只作用于网页中手动框选后复制；Markdown 和纯文本模式会接管整个选区。Alt＋双击公式只复制 TeX。"),
       quote.label, element("p", "omnigpt-hint", "仅需原生选区引用时开启。默认不改写浏览器选区方法。"));
     const actions = element("div", "omnigpt-actions");
     const download = button("导出文件", "export"); const copy = button("复制 Markdown", "copy"); const cancel = button("取消", "cancel"); cancel.hidden = true;
@@ -1193,18 +1291,23 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     const bar = element("progress"); bar.hidden = true; bar.setAttribute("aria-label", "导出进度");
     const status = element("div", "omnigpt-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
     const files = element("div", "omnigpt-files");
-    panel.append(header, scope.label, format.label, hint, details, actions, bar, status, files);
-    controls = { scope: scope.select, format: format.select, source: source.select, sourceLabel: source.label, limit: limit.select,
-      limitLabel: limit.label, metadata: metadata.input, style: style.select, quote: quote.input, hint, status, files, progress: bar,
-      export: download, copy, cancel };
+    panel.append(header, scope.label, format.label, roundMode.label, roundPicker, hint, details, actions, bar, status, files);
+    controls = { scope: scope.select, format: format.select, roundMode: roundMode.select, roundModeLabel: roundMode.label,
+      roundPicker, roundList, roundSummary, roundAll, roundNone, roundRefresh, source: source.select, sourceLabel: source.label, limit: limit.select,
+      limitLabel: limit.label, metadata: metadata.input, selectionCopy: selectionCopy.select, style: style.select, quote: quote.input,
+      hint, status, files, progress: bar, export: download, copy, cancel };
     root.append(panel); syncControls();
-    panel.addEventListener("change", () => {
+    panel.addEventListener("change", (event) => {
       if (task) return;
       preferences = { format: controls.format.value, includeMetadata: controls.metadata.checked };
       try { global.localStorage.setItem(SETTINGS_KEY, JSON.stringify(preferences)); } catch (_) { /* Optional. */ }
       clipboard.setMathStyle(controls.style.value);
+      clipboard.setSelectionCopyMode(controls.selectionCopy.value);
       clipboard.setQuoteCompatibility(controls.quote.checked); controls.quote.checked = clipboard.quoteCompatibility;
+      if (event.target.matches?.('input[data-round-index]')) updateRoundSummary();
       syncControls();
+      if ((event.target === controls.roundMode || event.target === controls.scope || event.target === controls.source) &&
+          controls.scope.value === "current" && controls.roundMode.value === "custom") void loadRoundChoices();
     });
   }
   function closePanel(focus = false) {
@@ -1217,8 +1320,13 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
   }
   async function run(action) {
     if (task || (action === "copy" && controls.scope.value === "all")) return;
-    const controller = new AbortController();
     const all = controls.scope.value === "all";
+    const customRounds = !all && controls.roundMode.value === "custom";
+    if (customRounds && (!currentConversationCache || currentConversationCacheKey !== roundCacheKey() ||
+        !controls.roundList.querySelector('input[data-round-index]'))) {
+      void loadRoundChoices(); return;
+    }
+    const controller = new AbortController();
     const format = action === "copy" ? "markdown" : controls.format.value;
     const options = { signal: controller.signal, source: controls.source.value, includeMetadata: controls.metadata.checked,
       maxConversations: Number(controls.limit.value), onProgress: renderProgress };
@@ -1226,7 +1334,17 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     controls.files.replaceChildren(); controls.progress.hidden = false; controls.progress.removeAttribute("value");
     panel.setAttribute("aria-busy", "true"); syncControls(); setStatus("准备导出…");
     try {
-      const payload = all ? await exporter.getArchiveExportPayload(format, options) : await exporter.getCurrentExportPayload(format, document, options);
+      let payload;
+      if (all) payload = await exporter.getArchiveExportPayload(format, options);
+      else {
+        let conversation = customRounds ? currentConversationCache : await exporter.collectCurrentConversation(document, options);
+        if (customRounds) {
+          const indices = selectedRoundIndices();
+          if (!indices.length) throw new Error("请先加载并至少选择一个对话轮次");
+          conversation = exporter.selectConversationRounds(conversation, indices);
+        }
+        payload = exporter.buildExportPayload(format, conversation, options);
+      }
       if (controller.signal.aborted) return;
       if (action === "copy") await clipboard.writeText(payload.content);
       else if (payload.files?.length) {
@@ -1260,11 +1378,19 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       if (!panel) buildPanel();
       if (!panel.hidden) { closePanel(true); return; }
       panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); controls.scope.focus({ preventScroll: true });
+      if (controls.scope.value === "current" && controls.roundMode.value === "custom" &&
+          (currentConversationCacheKey !== roundCacheKey() || !controls.roundList.querySelector('input[data-round-index]'))) void loadRoundChoices();
     });
     root.addEventListener("click", (event) => {
       const action = event.target.closest?.("button[data-action]")?.dataset.action;
       if (action === "close") closePanel(true);
       else if (action === "cancel") { task?.abort(); setStatus("正在取消…"); }
+      else if (action === "round-all" || action === "round-none") {
+        const checked = action === "round-all";
+        for (const input of controls.roundList.querySelectorAll('input[data-round-index]')) input.checked = checked;
+        updateRoundSummary(); syncControls();
+      }
+      else if (action === "round-refresh") void loadRoundChoices(true);
       else if (action === "export" || action === "copy") void run(action);
     });
     document.addEventListener("click", (event) => { if (panel && !panel.hidden && !root.contains(event.target)) closePanel(); });
