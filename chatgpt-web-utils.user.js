@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.4.2
+// @version      0.5.0
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -18,7 +18,7 @@
 // @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/refs/heads/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.4.2";
+globalThis.OmniGPTVersion = "0.5.0";
 
 (function initClipboard(global) {
   "use strict";
@@ -1086,7 +1086,9 @@ globalThis.OmniGPTVersion = "0.4.2";
   const clipboard = global.OmniGPTClipboard;
   const exporter = global.ChatGPTExporter;
   const SETTINGS_KEY = "omnigpt.export-options";
+  const POSITION_KEY = "omnigpt.position.v1";
   let root, launcher, panel, controls, task;
+  let suppressLauncherClick = false;
   let currentConversationCache = null;
   let currentConversationCacheKey = "";
   let lastProgressAt = 0;
@@ -1107,6 +1109,90 @@ globalThis.OmniGPTVersion = "0.4.2";
     const node = element("button", "omnigpt-action", text);
     node.type = "button"; node.dataset.action = action;
     return node;
+  }
+  function clamp(value, minimum, maximum) {
+    return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+  }
+  function setRootPosition(left, top, persist = false) {
+    if (!root || !launcher) return;
+    const rect = launcher.getBoundingClientRect();
+    const margin = 8;
+    const nextLeft = clamp(Number(left) || 0, margin, global.innerWidth - rect.width - margin);
+    const nextTop = clamp(Number(top) || 0, margin, global.innerHeight - rect.height - margin);
+    Object.assign(root.style, {
+      left: `${Math.round(nextLeft)}px`,
+      top: `${Math.round(nextTop)}px`,
+      right: "auto",
+      bottom: "auto",
+      transform: "none",
+    });
+    if (persist) {
+      try { global.localStorage.setItem(POSITION_KEY, JSON.stringify({ left: nextLeft, top: nextTop })); } catch (_) { /* Storage is optional. */ }
+    }
+  }
+  function restoreRootPosition() {
+    try {
+      const saved = JSON.parse(global.localStorage.getItem(POSITION_KEY) || "null");
+      if (saved && Number.isFinite(Number(saved.left)) && Number.isFinite(Number(saved.top))) {
+        setRootPosition(Number(saved.left), Number(saved.top));
+      }
+    } catch (_) { /* Storage is optional. */ }
+  }
+  function positionPanel() {
+    if (!panel || panel.hidden || !launcher) return;
+    const margin = 8;
+    const gap = 8;
+    const launcherRect = launcher.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    let left = launcherRect.right - panelRect.width;
+    if (left < margin) left = launcherRect.left;
+    left = clamp(left, margin, global.innerWidth - panelRect.width - margin);
+    let top = launcherRect.top - panelRect.height - gap;
+    if (top < margin) top = launcherRect.bottom + gap;
+    top = clamp(top, margin, global.innerHeight - panelRect.height - margin);
+    Object.assign(panel.style, {
+      position: "fixed",
+      left: `${Math.round(left)}px`,
+      top: `${Math.round(top)}px`,
+      right: "auto",
+      bottom: "auto",
+      transform: "none",
+    });
+  }
+  function makeDraggable(handle) {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.isPrimary === false) return;
+      if (handle !== launcher && event.target.closest("button, input, select, a, summary")) return;
+      const launcherRect = launcher.getBoundingClientRect();
+      const start = { x: event.clientX, y: event.clientY, left: launcherRect.left, top: launcherRect.top };
+      let moved = false;
+      handle.setPointerCapture?.(event.pointerId);
+      const move = (moveEvent) => {
+        const dx = moveEvent.clientX - start.x;
+        const dy = moveEvent.clientY - start.y;
+        if (!moved && Math.hypot(dx, dy) < 4) return;
+        moved = true;
+        moveEvent.preventDefault();
+        root.classList.add("is-dragging");
+        setRootPosition(start.left + dx, start.top + dy);
+        positionPanel();
+      };
+      const finish = (finishEvent) => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", finish);
+        handle.removeEventListener("pointercancel", finish);
+        handle.releasePointerCapture?.(finishEvent.pointerId);
+        root.classList.remove("is-dragging");
+        if (!moved) return;
+        const current = launcher.getBoundingClientRect();
+        setRootPosition(current.left, current.top, true);
+        suppressLauncherClick = true;
+        global.setTimeout(() => { suppressLauncherClick = false; }, 0);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", finish);
+      handle.addEventListener("pointercancel", finish);
+    });
   }
   function selectField(text, key, values) {
     const label = element("label", "omnigpt-field");
@@ -1142,11 +1228,12 @@ globalThis.OmniGPTVersion = "0.4.2";
 #omnigpt-root button,#omnigpt-root select{font:inherit;color:inherit;border:1px solid var(--og-border);background:var(--og-control);border-radius:8px}
 #omnigpt-root button{cursor:pointer;padding:8px 12px}#omnigpt-root button:disabled,#omnigpt-root select:disabled{opacity:.55;cursor:default}
 #omnigpt-root :focus-visible{outline:2px solid var(--og-fg);outline-offset:2px}
-#omnigpt-root .omnigpt-launcher{border-radius:99px;background:var(--og-bg);box-shadow:0 2px 9px #0002;font-weight:650}
+#omnigpt-root .omnigpt-launcher{border-radius:99px;background:var(--og-bg);box-shadow:0 2px 9px #0002;font-weight:650;cursor:grab;touch-action:none;user-select:none}
 #omnigpt-root .omnigpt-mark{display:none}
 #omnigpt-root .omnigpt-panel{position:absolute;right:0;bottom:50px;width:min(340px,calc(100vw - 24px));max-height:calc(100dvh - 30px);overflow:auto;padding:16px;border:1px solid var(--og-border);border-radius:12px;background:var(--og-bg);box-shadow:0 6px 22px #0002}
 #omnigpt-root .omnigpt-header,#omnigpt-root .omnigpt-actions{display:flex;align-items:center;gap:8px}
-#omnigpt-root .omnigpt-header{justify-content:space-between;margin-bottom:12px}#omnigpt-root .omnigpt-title{font-size:16px;font-weight:700}
+#omnigpt-root .omnigpt-header{justify-content:space-between;margin-bottom:12px;cursor:grab;touch-action:none;user-select:none}#omnigpt-root .omnigpt-title{font-size:16px;font-weight:700}
+#omnigpt-root.is-dragging .omnigpt-launcher,#omnigpt-root.is-dragging .omnigpt-header{cursor:grabbing}
 #omnigpt-root .omnigpt-version{font-size:11px;color:var(--og-muted);margin-left:8px}#omnigpt-root [data-action=close]{border:0;background:none;padding:2px 6px;font-size:20px}
 #omnigpt-root .omnigpt-field{display:grid;grid-template-columns:74px minmax(0,1fr);align-items:center;gap:8px;margin:10px 0}
 #omnigpt-root select{width:100%;min-width:0;padding:7px 6px}#omnigpt-root .omnigpt-check{display:flex;gap:8px;align-items:flex-start;margin:12px 0}#omnigpt-root input{accent-color:var(--og-fg);margin-top:4px}
@@ -1268,7 +1355,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.4.2"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.5.0"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);
@@ -1306,7 +1393,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
       roundPicker, roundList, roundSummary, roundAll, roundNone, roundRefresh, source: source.select, sourceLabel: source.label, limit: limit.select,
       limitLabel: limit.label, metadata: metadata.input, selectionCopy: selectionCopy.select, style: style.select, quote: quote.input,
       hint, status, files, progress: bar, export: download, copy, cancel };
-    root.append(panel); syncControls();
+    root.append(panel); makeDraggable(header); syncControls();
     panel.addEventListener("change", (event) => {
       if (task) return;
       preferences = { format: controls.format.value, includeMetadata: controls.metadata.checked };
@@ -1383,11 +1470,13 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     launcher.setAttribute("aria-label", "打开 ChatGPT Web Utils"); launcher.setAttribute("aria-expanded", "false"); launcher.setAttribute("aria-controls", "omnigpt-panel");
     launcher.append(element("span", "omnigpt-mark", "C"), element("span", "omnigpt-label", "ChatGPT Web Utils"));
     root.append(launcher); document.body.append(root);
+    makeDraggable(launcher); restoreRootPosition();
     // Only the launcher exists at startup. Build the form on its first explicit opening.
-    launcher.addEventListener("click", () => {
+    launcher.addEventListener("click", (event) => {
+      if (suppressLauncherClick) { event.preventDefault(); return; }
       if (!panel) buildPanel();
       if (!panel.hidden) { closePanel(true); return; }
-      panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); controls.scope.focus({ preventScroll: true });
+      panel.hidden = false; launcher.setAttribute("aria-expanded", "true"); positionPanel(); controls.scope.focus({ preventScroll: true });
       if (controls.scope.value === "current" && controls.roundMode.value === "custom" &&
           (currentConversationCacheKey !== roundCacheKey() || !controls.roundList.querySelector('input[data-round-index]'))) void loadRoundChoices();
     });
@@ -1405,6 +1494,11 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     });
     document.addEventListener("click", (event) => { if (panel && !panel.hidden && !root.contains(event.target)) closePanel(); });
     document.addEventListener("keydown", (event) => { if (event.key === "Escape" && panel && !panel.hidden) { event.preventDefault(); closePanel(true); } });
+    global.addEventListener("resize", () => {
+      const current = launcher.getBoundingClientRect();
+      setRootPosition(current.left, current.top, true);
+      positionPanel();
+    });
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", setupUi, { once: true });
   else setupUi();
