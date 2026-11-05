@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 - 2026-11-05
+
+- Publish local changes and refresh the userscript install entry.
+
+
 ## 0.5.0 - 2026-11-05
 
 - 浮动入口和面板标题栏支持鼠标或触摸拖拽，并缓存上次位置。

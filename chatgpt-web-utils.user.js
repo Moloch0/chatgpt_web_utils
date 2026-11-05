@@ -2,7 +2,7 @@
 // @name         ChatGPT Web Utils - Export & LaTeX Copy
 // @name:zh-CN   ChatGPT Web Utils - 对话导出与 LaTeX 复制
 // @namespace    https://github.com/Moloch0/chatgpt_web_utils
-// @version      0.5.0
+// @version      0.5.1
 // @description  Export ChatGPT conversations and copy LaTeX as portable plain-text Markdown.
 // @description:zh-CN 导出 ChatGPT 对话，并将公式转换为便携的 Markdown LaTeX 格式。
 // @author       Moloch0, OmniGPT contributors
@@ -18,7 +18,7 @@
 // @updateURL    https://raw.githubusercontent.com/Moloch0/chatgpt_web_utils/refs/heads/main/chatgpt-web-utils.user.js
 // ==/UserScript==
 
-globalThis.OmniGPTVersion = "0.5.0";
+globalThis.OmniGPTVersion = "0.5.1";
 
 (function initClipboard(global) {
   "use strict";
@@ -1355,7 +1355,7 @@ html.light #omnigpt-root{--og-bg:#fff;--og-fg:#202124;--og-muted:#60656d;--og-bo
     panel.hidden = true; panel.setAttribute("role", "dialog"); panel.setAttribute("aria-labelledby", "omnigpt-title");
     const header = element("div", "omnigpt-header");
     const title = element("div", "omnigpt-title", "ChatGPT Web Utils"); title.id = "omnigpt-title";
-    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.5.0"));
+    title.append(element("span", "omnigpt-version", global.OmniGPTVersion || "0.5.1"));
     const close = button("×", "close"); close.setAttribute("aria-label", "关闭面板");
     header.append(title, close);
     const scope = selectField("导出范围", "scope", [["current", "当前对话"], ["all", "历史对话"]]);

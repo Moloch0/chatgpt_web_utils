@@ -81,7 +81,7 @@ function Open-InstallPage {
   for ($attempt = 1; $attempt -le 12; $attempt += 1) {
     try {
       $stamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-      $response = Invoke-WebRequest -UseBasicParsing -Headers @{ "Cache-Control" = "no-cache" } -Uri "$installUrl?version=$Version&attempt=$attempt&t=$stamp"
+      $response = Invoke-WebRequest -UseBasicParsing -Headers @{ "Cache-Control" = "no-cache" } -Uri "${installUrl}?version=$Version&attempt=$attempt&t=$stamp"
       if ($response.Content -match ('(?m)^// @version\s+' + [regex]::Escape($Version) + '\s*$')) {
         $ready = $true
         break
@@ -93,7 +93,7 @@ function Open-InstallPage {
   }
   if (-not $ready) { Write-Warning "GitHub Raw did not confirm v$Version yet; opening the install URL anyway." }
   $openStamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-  Start-Process "$installUrl?version=$Version&t=$openStamp"
+  Start-Process "${installUrl}?version=$Version&t=$openStamp"
 }
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "Git was not found. Install Git before publishing." }
